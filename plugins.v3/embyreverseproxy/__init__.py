@@ -1,5 +1,6 @@
 from threading import Thread
 from typing import Any, Dict, List, Optional, Tuple
+from urllib.parse import urlparse
 
 from uvicorn import Config, Server
 
@@ -11,6 +12,59 @@ from .proxy_app import create_app
 
 
 PIN_RULES_SEP = " => "
+SERVERS_SEP = " => "
+
+
+def _parse_servers(raw: str) -> List[Tuple[str, str, int]]:
+    """
+    解析多行 Emby 服务器与监听配置
+
+    :param raw (str): 每行「Emby地址 => [监听地址:]端口」
+
+    :return List: 合法配置列表，元素为 (Emby地址, 监听地址, 监听端口)
+    """
+    result: List[Tuple[str, str, int]] = []
+    for line_number, line in enumerate((raw or "").strip().splitlines(), start=1):
+        line = line.strip()
+        if not line:
+            continue
+        if SERVERS_SEP not in line:
+            logger.warning("Emby服务器配置第 %s 行格式错误，已忽略", line_number)
+            continue
+        emby_host, listener = (part.strip() for part in line.split(SERVERS_SEP, 1))
+        if not emby_host.startswith(("http://", "https://")):
+            emby_host = "http://" + emby_host
+        try:
+            parsed = urlparse(emby_host)
+            _ = parsed.port
+            valid_emby = bool(parsed.hostname) and not parsed.username and not parsed.password
+        except ValueError:
+            valid_emby = False
+        if not valid_emby or any(char.isspace() for char in emby_host):
+            logger.warning("Emby服务器配置第 %s 行地址无效，已忽略", line_number)
+            continue
+
+        listener_host = "0.0.0.0"
+        port_text = listener
+        if listener.startswith("["):
+            closing = listener.find("]")
+            if closing < 0 or closing + 1 >= len(listener) or listener[closing + 1] != ":":
+                port_text = ""
+            else:
+                listener_host = listener[1:closing]
+                port_text = listener[closing + 2 :]
+        elif ":" in listener:
+            listener_host, port_text = listener.rsplit(":", 1)
+            listener_host = listener_host.strip()
+        try:
+            port = int(port_text)
+        except (TypeError, ValueError):
+            port = 0
+        if not listener_host or any(char.isspace() for char in listener_host) or not 1 <= port <= 65535:
+            logger.warning("Emby服务器配置第 %s 行监听地址或端口无效，已忽略", line_number)
+            continue
+        result.append((emby_host.rstrip("/"), listener_host, port))
+    return result
 
 
 def _parse_pin_rules(raw: str) -> List[Tuple[str, str]]:
@@ -53,6 +107,8 @@ class EmbyReverseProxy(_PluginBase):
     Emby 302 反向代理
 
     Attributes:
+        _servers_raw: 多服务器原始配置
+        _server_configs: 已解析的服务器配置
         _media_source_path_prefixes_raw: 媒体源隐藏前缀原始配置
         _media_source_path_prefixes: 已拆分的媒体源隐藏前缀
     """
@@ -62,7 +118,7 @@ class EmbyReverseProxy(_PluginBase):
         "Emby 302 反向代理，自动代理 HTTP 链接，跳转最终地址，支持外部播放器调用。"
     )
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/refs/heads/main/icons/Emby_A.png"
-    plugin_version = "3.0.0"
+    plugin_version = "3.0.1"
     plugin_author = "DDSRem"
     author_url = "https://github.com/DDSRem"
     plugin_config_prefix = "embyreverseproxy_"
@@ -71,6 +127,8 @@ class EmbyReverseProxy(_PluginBase):
 
     _enabled = False
     _emby_host = ""
+    _servers_raw = ""
+    _server_configs: List[Tuple[str, str, int]] = []
     _host = "0.0.0.0"
     _port = 8099
     _pin_rules: List[Tuple[str, str]] = []
@@ -81,6 +139,8 @@ class EmbyReverseProxy(_PluginBase):
     _external_player_list: List[str] = []
     _server = None
     _thread = None
+    _proxy_servers: List[Server] = []
+    _proxy_threads: List[Thread] = []
 
     def init_plugin(self, config: Optional[Dict[str, Any]] = None) -> None:
         """
@@ -90,12 +150,22 @@ class EmbyReverseProxy(_PluginBase):
         """
         if config:
             self._enabled = config.get("enabled", False)
+            self._servers_raw = (config.get("servers") or "").strip()
             self._emby_host = (config.get("emby_host") or "").strip()
             self._host = (config.get("host") or "0.0.0.0").strip() or "0.0.0.0"
             try:
                 self._port = int(config.get("port") or 8099)
             except (TypeError, ValueError):
                 self._port = 8099
+            if self._servers_raw:
+                self._server_configs = _parse_servers(self._servers_raw)
+            elif self._emby_host:
+                self._servers_raw = f"{self._emby_host} => {self._host}:{self._port}"
+                self._server_configs = _parse_servers(self._servers_raw)
+            else:
+                self._server_configs = []
+            if self._server_configs:
+                self._emby_host, self._host, self._port = self._server_configs[0]
             self._pin_rules_raw = (config.get("pin_rules") or "").strip()
             self._pin_rules = _parse_pin_rules(self._pin_rules_raw)
             self._media_source_path_prefixes_raw = (
@@ -112,38 +182,36 @@ class EmbyReverseProxy(_PluginBase):
 
         self.stop_service()
 
-        if self._enabled and self._emby_host:
-            if not self._emby_host.startswith(("http://", "https://")):
-                self._emby_host = "http://" + self._emby_host
-            app = create_app(
-                self._emby_host,
-                pin_rules=self._pin_rules,
-                media_source_path_prefixes=self._media_source_path_prefixes,
-                external_player_url=self._external_player_url,
-                external_player_list=self._external_player_list,
-            )
-            try:
-                uv_config = Config(
-                    app=app,
-                    host=self._host,
-                    port=self._port,
-                    log_config=None,
-                )
-                self._server = Server(uv_config)
-                self._thread = Thread(target=self._server.run, daemon=True)
-                self._thread.start()
-                logger.info(
-                    "EmbyReverseProxy 代理已启动: %s:%s -> %s",
-                    self._host,
-                    self._port,
-                    self._emby_host,
-                )
-            except Exception as e:
-                logger.error("EmbyReverseProxy 启动失败: %s", e, exc_info=True)
-                self._server = None
-                self._thread = None
-        elif self._enabled and not self._emby_host:
-            logger.warning("EmbyReverseProxy 已启用但未配置 Emby 地址，代理未启动")
+        if self._enabled and self._server_configs:
+            for emby_host, host, port in self._server_configs:
+                try:
+                    app = create_app(
+                        emby_host,
+                        pin_rules=self._pin_rules,
+                        media_source_path_prefixes=self._media_source_path_prefixes,
+                        external_player_url=self._external_player_url,
+                        external_player_list=self._external_player_list,
+                    )
+                    uv_config = Config(app=app, host=host, port=port, log_config=None)
+                    server = Server(uv_config)
+                    thread = Thread(target=server.run, daemon=True)
+                    self._proxy_servers.append(server)
+                    self._proxy_threads.append(thread)
+                    thread.start()
+                    logger.info(
+                        "EmbyReverseProxy 代理已启动: %s:%s -> %s",
+                        host,
+                        port,
+                        emby_host,
+                    )
+                except Exception as e:
+                    logger.error("EmbyReverseProxy 启动失败: %s", e, exc_info=True)
+            self._server = self._proxy_servers[0] if self._proxy_servers else None
+            self._thread = self._proxy_threads[0] if self._proxy_threads else None
+            if not self._proxy_servers:
+                logger.warning("EmbyReverseProxy 没有可启动的有效配置")
+        elif self._enabled:
+            logger.warning("EmbyReverseProxy 已启用但未配置有效 Emby 地址，代理未启动")
 
     def _update_config(self) -> None:
         """
@@ -152,6 +220,7 @@ class EmbyReverseProxy(_PluginBase):
         self.update_config(
             {
                 "enabled": self._enabled,
+                "servers": self._servers_raw,
                 "emby_host": self._emby_host,
                 "host": self._host,
                 "port": self._port,
@@ -166,15 +235,19 @@ class EmbyReverseProxy(_PluginBase):
         """
         停止代理服务：设置 server.should_exit 并等待线程结束
         """
-        if self._server is not None:
+        if self._proxy_servers:
             try:
-                self._server.should_exit = True
-                if self._thread is not None and self._thread.is_alive():
-                    self._thread.join(timeout=5.0)
+                for server in self._proxy_servers:
+                    server.should_exit = True
+                for thread in self._proxy_threads:
+                    if thread.is_alive():
+                        thread.join(timeout=5.0)
                 logger.info("EmbyReverseProxy 代理已停止")
             except Exception as e:
                 logger.error("EmbyReverseProxy 停止异常: %s", e, exc_info=True)
             finally:
+                self._proxy_servers.clear()
+                self._proxy_threads.clear()
                 self._server = None
                 self._thread = None
 
@@ -282,47 +355,16 @@ class EmbyReverseProxy(_PluginBase):
                 "content": [
                     {
                         "component": "VCol",
-                        "props": {"cols": 12, "md": 6},
+                        "props": {"cols": 12},
                         "content": [
                             {
-                                "component": "VTextField",
+                                "component": "VTextarea",
                                 "props": {
-                                    "model": "emby_host",
-                                    "label": "Emby 服务器地址",
-                                    "placeholder": "http://192.168.1.100:8096",
-                                    "hint": "Emby 服务器根地址，必填",
-                                    "persistent-hint": True,
-                                },
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VCol",
-                        "props": {"cols": 12, "md": 3},
-                        "content": [
-                            {
-                                "component": "VTextField",
-                                "props": {
-                                    "model": "host",
-                                    "label": "监听地址",
-                                    "placeholder": "0.0.0.0",
-                                    "hint": "代理监听地址",
-                                    "persistent-hint": True,
-                                },
-                            }
-                        ],
-                    },
-                    {
-                        "component": "VCol",
-                        "props": {"cols": 12, "md": 3},
-                        "content": [
-                            {
-                                "component": "VTextField",
-                                "props": {
-                                    "model": "port",
-                                    "label": "监听端口",
-                                    "placeholder": "8099",
-                                    "hint": "代理监听端口",
+                                    "model": "servers",
+                                    "label": "Emby 服务器与监听配置",
+                                    "rows": 4,
+                                    "placeholder": "每行一条：Emby地址 => [监听地址:]端口\nhttp://192.168.1.100:8096 => 0.0.0.0:8099",
+                                    "hint": "支持多个 Emby；监听地址可省略，默认 0.0.0.0。旧版单服务器配置会自动转换",
                                     "persistent-hint": True,
                                 },
                             }
@@ -378,6 +420,7 @@ class EmbyReverseProxy(_PluginBase):
             },
         ], {
             "enabled": False,
+            "servers": "",
             "emby_host": "",
             "host": "0.0.0.0",
             "port": 8099,
