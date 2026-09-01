@@ -2,12 +2,12 @@
 
 MoviePilot 第三方插件仓库
 
-## Emby 302 反向代理
+## Emby 302 多服务器反向代理
 
-- [V3 插件](plugins.v3/embyreverseproxy)
-- [V2 插件](plugins.v2/embyreverseproxy)
+- [V3 插件](plugins.v3/embyreverseproxymulti)
+- [V2 插件](plugins.v2/embyreverseproxymulti)
 
-Emby 302 反向代理，支持多个 Emby 服务器和监听端口，自动代理 HTTP 链接并跳转最终地址，支持外部播放器调用。
+Emby 302 多服务器反向代理，支持多个 Emby 服务器和监听端口，自动代理 HTTP 链接并跳转最终地址，支持外部播放器调用。
 
 配置格式：
 

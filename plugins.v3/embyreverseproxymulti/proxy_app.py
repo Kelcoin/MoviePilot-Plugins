@@ -104,7 +104,7 @@ CROSS_ORIGIN_VALUE_RE = re_compile(
     r'\w+\.IsRemote\s*&&\s*"DirectPlay"\s*===\s*\w+\s*\?\s*null\s*:\s*"anonymous"'
 )
 
-CROSS_ORIGIN_INTERCEPT_MARKER = "[EmbyReverseProxy] crossOrigin"
+CROSS_ORIGIN_INTERCEPT_MARKER = "[EmbyReverseProxyMulti] crossOrigin"
 
 CROSS_ORIGIN_INTERCEPT_SCRIPT = (
     """<script>

@@ -1,13 +1,13 @@
 {
-  "EmbyReverseProxy": {
+  "EmbyReverseProxyMulti": {
     "v3": false,
-    "name": "Emby 302 反向代理",
-    "description": "Emby 302 反向代理，自动代理 HTTP 链接，跳转最终地址，支持外部播放器调用。",
+    "name": "Emby 302 多服务器反向代理",
+    "description": "Emby 302 多服务器反向代理，自动代理 HTTP 链接，跳转最终地址，支持外部播放器调用。",
     "labels": "云盘,媒体",
     "version": "0.2.7",
     "release": true,
     "icon": "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/refs/heads/main/icons/Emby_A.png",
-    "author": "DDSRem",
+    "author": "Kelcoin",
     "level": 1,
     "history": {
       "v0.2.7": "支持配置多个 Emby 服务器和监听端口",

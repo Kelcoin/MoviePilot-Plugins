@@ -1,12 +1,12 @@
 from base64 import b64decode, b64encode, urlsafe_b64encode
 from re import IGNORECASE, compile as re_compile
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import Request
 
 
-EXTERNAL_PLAYERS: Dict[str, Dict[str, str]] = {
+EXTERNAL_PLAYERS: dict[str, dict[str, str]] = {
     "potplayer": {"name": "PotPlayer"},
     "vlc": {"name": "VLC"},
     "iina": {"name": "IINA"},
@@ -25,12 +25,12 @@ EXTERNAL_PLAYERS: Dict[str, Dict[str, str]] = {
 
 ALL_EXTERNAL_PLAYER_KEYS = list(EXTERNAL_PLAYERS.keys())
 
-EXTERNAL_PLAYER_MARKER = "[EmbyReverseProxy] externalPlayer"
+EXTERNAL_PLAYER_MARKER = "[EmbyReverseProxyMulti] externalPlayer"
 REDIRECT_PATH = "/redirect2external"
 EMBY_AUTH_TOKEN_RE = re_compile(r'Token="([^"]+)"')
 
 
-def extract_api_key(request: Request) -> Optional[str]:
+def extract_api_key(request: Request) -> str | None:
     """
     从请求中提取 api_key（query、X-Emby-Token 头、或 MediaBrowser 认证头）
 
@@ -66,7 +66,7 @@ def decode_redirect_link(link: str) -> str:
     return b64decode((link + padding).encode("ascii")).decode("utf-8")
 
 
-def build_external_player_script(player_keys: List[str]) -> Optional[str]:
+def build_external_player_script(player_keys: list[str]) -> str | None:
     """
     构建前端按钮注入脚本，前端直接使用 ExternalUrls 数据
 
@@ -210,7 +210,7 @@ def build_stream_url_for_item(
     request: Request,
     emby_host: str,
     item_id: str,
-    source: Dict[str, Any],
+    source: dict[str, Any],
     api_key: str,
 ) -> str:
     """
@@ -239,12 +239,12 @@ def build_stream_url_for_item(
 
 
 def inject_external_urls(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     request: Request,
     emby_host: str,
     item_id: str,
     api_key: str,
-    player_keys: List[str],
+    player_keys: list[str],
 ) -> bool:
     """
     向 Items 响应注入 ExternalUrls 外部播放器链接
@@ -324,7 +324,7 @@ def _build_player_target_url(
     item_id: str,
     server_id: str,
     request: Request,
-) -> Optional[str]:
+) -> str | None:
     sec, ms, hhmmss = _position_parts(position_ticks)
     media_name = source_name or "default"
 
@@ -416,7 +416,7 @@ def _build_player_target_url(
     return _wrap_redirect(request, raw)
 
 
-def _position_parts(position_ticks: int) -> Tuple[int, int, str]:
+def _position_parts(position_ticks: int) -> tuple[int, int, str]:
     ms = int(position_ticks / 10_000) if position_ticks > 0 else 0
     sec = int(ms / 1000) if ms > 0 else 0
     h, remainder = divmod(sec, 3600)
@@ -451,7 +451,7 @@ def _get_os_type(user_agent: str) -> str:
     return "other"
 
 
-def _get_display_title(source: Dict[str, Any]) -> str:
+def _get_display_title(source: dict[str, Any]) -> str:
     streams = source.get("MediaStreams")
     if not isinstance(streams, list):
         return ""
@@ -461,15 +461,15 @@ def _get_display_title(source: Dict[str, Any]) -> str:
     return ""
 
 
-def _get_sub_url(stream_url: str, source: Dict[str, Any], api_key: str) -> str:
+def _get_sub_url(stream_url: str, source: dict[str, Any], api_key: str) -> str:
     streams = source.get("MediaStreams")
     if not isinstance(streams, list):
         return ""
     source_id = source.get("Id", "")
     base = stream_url.split("/stream.", 1)[0]
 
-    preferred_idx: Optional[int] = None
-    fallback_idx: Optional[int] = None
+    preferred_idx: int | None = None
+    fallback_idx: int | None = None
     for idx, stream in enumerate(streams):
         if not isinstance(stream, dict):
             continue

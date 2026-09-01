@@ -102,9 +102,9 @@ def _parse_pin_rules(raw: str) -> List[Tuple[str, str]]:
     return result
 
 
-class EmbyReverseProxy(_PluginBase):
+class EmbyReverseProxyMulti(_PluginBase):
     """
-    Emby 302 反向代理
+    Emby 302 多服务器反向代理
 
     Attributes:
         _servers_raw: 多服务器原始配置
@@ -113,15 +113,15 @@ class EmbyReverseProxy(_PluginBase):
         _media_source_path_prefixes: 已拆分的媒体源隐藏前缀
     """
 
-    plugin_name = "Emby 302 反向代理"
+    plugin_name = "Emby 302 多服务器反向代理"
     plugin_desc = (
-        "Emby 302 反向代理，自动代理 HTTP 链接，跳转最终地址，支持外部播放器调用。"
+        "Emby 302 多服务器反向代理，自动代理 HTTP 链接，跳转最终地址，支持外部播放器调用。"
     )
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/refs/heads/main/icons/Emby_A.png"
     plugin_version = "0.2.7"
-    plugin_author = "DDSRem"
-    author_url = "https://github.com/DDSRem"
-    plugin_config_prefix = "embyreverseproxy_"
+    plugin_author = "Kelcoin"
+    author_url = "https://github.com/Kelcoin"
+    plugin_config_prefix = "embyreverseproxymulti_"
     plugin_order = 20
     auth_level = 1
 
@@ -199,19 +199,19 @@ class EmbyReverseProxy(_PluginBase):
                     self._proxy_threads.append(thread)
                     thread.start()
                     logger.info(
-                        "EmbyReverseProxy 代理已启动: %s:%s -> %s",
+                        "EmbyReverseProxyMulti 代理已启动: %s:%s -> %s",
                         host,
                         port,
                         emby_host,
                     )
                 except Exception as e:
-                    logger.error("EmbyReverseProxy 启动失败: %s", e, exc_info=True)
+                    logger.error("EmbyReverseProxyMulti 启动失败: %s", e, exc_info=True)
             self._server = self._proxy_servers[0] if self._proxy_servers else None
             self._thread = self._proxy_threads[0] if self._proxy_threads else None
             if not self._proxy_servers:
-                logger.warning("EmbyReverseProxy 没有可启动的有效配置")
+                logger.warning("EmbyReverseProxyMulti 没有可启动的有效配置")
         elif self._enabled:
-            logger.warning("EmbyReverseProxy 已启用但未配置有效 Emby 地址，代理未启动")
+            logger.warning("EmbyReverseProxyMulti 已启用但未配置有效 Emby 地址，代理未启动")
 
     def _update_config(self) -> None:
         """
@@ -242,9 +242,9 @@ class EmbyReverseProxy(_PluginBase):
                 for thread in self._proxy_threads:
                     if thread.is_alive():
                         thread.join(timeout=5.0)
-                logger.info("EmbyReverseProxy 代理已停止")
+                logger.info("EmbyReverseProxyMulti 代理已停止")
             except Exception as e:
-                logger.error("EmbyReverseProxy 停止异常: %s", e, exc_info=True)
+                logger.error("EmbyReverseProxyMulti 停止异常: %s", e, exc_info=True)
             finally:
                 self._proxy_servers.clear()
                 self._proxy_threads.clear()
