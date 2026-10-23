@@ -16,6 +16,23 @@ http://emby-a:8096 => 0.0.0.0:8099
 http://emby-b:8096 => 0.0.0.0:8100
 ```
 
+## 神医媒体文件同步删除
+
+- [V2 插件](plugins.v2/samediasyncdel)
+
+通过神医助手（StrmAssistant）的媒体深度删除通知，同步删除 MoviePilot 转移记录中记录的源文件与下载任务，支持 115 网盘、123 网盘与本地文件。
+
+本仓库版本同步自 [DDSRem-Dev/MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)，并在 1.0.9 修正两处问题：
+
+- Emby 通知目标以 JSON 报文直接投递时无法解析，事件到不了插件；
+- 深度删除下发的路径是媒体目录且带 Windows 反斜杠，导致路径映射与转移记录无法匹配。
+
+Emby 通知需指向插件端点（`<API_TOKEN>` 为 MoviePilot 的 API 令牌），并勾选「媒体深度删除」：
+
+```text
+http://<MoviePilot 地址>:3001/api/v1/plugin/SaMediaSyncDel/emby_webhook?apikey=<API_TOKEN>
+```
+
 ## 许可证
 
 此仓库根据 GNU General Public License v3.0 许可证进行许可，详见 [LICENSE](LICENSE)。
