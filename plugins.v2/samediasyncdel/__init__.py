@@ -37,7 +37,7 @@ class SaMediaSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "mediasyncdel.png"
     # 插件版本
-    plugin_version = "1.0.9"
+    plugin_version = "1.0.10"
     # 插件作者
     plugin_author = "DDSRem,thsrite"
     # 作者主页
@@ -1010,7 +1010,7 @@ class SaMediaSyncDel(_PluginBase):
         event_type = event_data.event
 
         # 神医助手深度删除标识
-        if not event_type or str(event_type) != "deep.delete":
+        if not event_type or "deep.delete" not in str(event_type):
             logger.debug(f"非神医助手深度删除事件，跳过处理：{event_type}")
             return
 
