@@ -18,13 +18,14 @@
     "name": "神医媒体文件同步删除",
     "description": "通过神医插件通知同步删除历史记录、源文件和下载任务。",
     "labels": "媒体库，文件整理",
-    "version": "3.0.1",
+    "version": "3.0.2",
     "release": true,
     "icon": "mediasyncdel.png",
     "author": "DDSRem",
     "system_version": ">=3.0.0",
     "level": 1,
     "history": {
+      "v3.0.2": "支持 115网盘Plus 插件存储，宿主 115网盘 未登录时自动回退，并在定位失败时给出可诊断日志",
       "v3.0.1": "修复 Emby 通知 JSON 报文无法解析、深度删除下发媒体目录或带 Windows 反斜杠路径时无法匹配转移记录与网盘文件",
       "v3.0.0": "适配 MoviePilot V3 SDK 与插件依赖清单"
     }

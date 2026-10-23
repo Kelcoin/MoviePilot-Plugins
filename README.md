@@ -23,11 +23,12 @@ http://emby-b:8096 => 0.0.0.0:8100
 
 通过神医助手（StrmAssistant）的媒体深度删除通知，同步删除 MoviePilot 转移记录中记录的源文件与下载任务，支持 115 网盘、123 网盘与本地文件。
 
-本仓库版本同步自 [DDSRem-Dev/MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)，V2 版本为 1.0.10、V3 版本为 3.0.1，修正以下问题：
+本仓库版本同步自 [DDSRem-Dev/MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)，V2 版本为 1.0.10、V3 版本为 3.0.2，修正以下问题：
 
 - Emby 通知目标以 JSON 报文直接投递时无法解析，事件到不了插件；
 - 深度删除下发的路径是媒体目录且带 Windows 反斜杠，导致路径映射与转移记录无法匹配；
 - 深度删除事件名带命名空间前缀（如 `strmassistant.deep.delete`）时被当成非深度删除事件跳过。
+- V3 版本写死宿主 `u115` 存储，只登录了 115网盘Plus 插件存储时无法删除（现按「自动探测」依次尝试，可在插件设置中指定）。
 
 Emby 通知需指向插件端点（`<API_TOKEN>` 为 MoviePilot 的 API 令牌），并勾选「媒体深度删除」：
 

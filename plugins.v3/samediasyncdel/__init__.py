@@ -30,6 +30,10 @@ from app.schemas.types import (
 )
 
 
+# 115 存储类型候选：宿主 115网盘 与 115网盘Plus 插件存储
+DEFAULT_P115_STORAGE_TYPES = ("u115", "115网盘Plus")
+
+
 class SaMediaSyncDel(_PluginBase):
     """
     神医媒体文件同步删除插件：监听 Emby 删除事件，同步删除转移记录、源文件、下载任务
@@ -42,7 +46,7 @@ class SaMediaSyncDel(_PluginBase):
     # 插件图标
     plugin_icon = "mediasyncdel.png"
     # 插件版本
-    plugin_version = "3.0.1"
+    plugin_version = "3.0.2"
     # 插件作者
     plugin_author = "DDSRem,thsrite"
     # 作者主页
@@ -63,6 +67,7 @@ class SaMediaSyncDel(_PluginBase):
     _local_library_path = None
     _p115_library_path = None
     _p115_force_delete_files = False
+    _p115_storage = None
     _p123_library_path = None
     _p123_force_delete_files = False
     _transferchain = None
@@ -103,6 +108,7 @@ class SaMediaSyncDel(_PluginBase):
             self._local_library_path = config.get("local_library_path")
             self._p115_library_path = config.get("p115_library_path")
             self._p115_force_delete_files = config.get("p115_force_delete_files")
+            self._p115_storage = config.get("p115_storage") or "auto"
             self._p123_library_path = config.get("p123_library_path")
             self._p123_force_delete_files = config.get("p123_force_delete_files")
             self._mediaservers = config.get("mediaservers") or []
@@ -130,6 +136,7 @@ class SaMediaSyncDel(_PluginBase):
                     "local_library_path": self._local_library_path,
                     "p115_library_path": self._p115_library_path,
                     "p115_force_delete_files": self._p115_force_delete_files,
+                    "p115_storage": self._p115_storage,
                     "p123_library_path": self._p123_library_path,
                     "p123_force_delete_files": self._p123_force_delete_files,
                     "mediaservers": self._mediaserver,
@@ -413,6 +420,41 @@ class SaMediaSyncDel(_PluginBase):
                             }
                         ],
                     },
+                ],
+            },
+            {
+                "component": "VRow",
+                "content": [
+                    {
+                        "component": "VCol",
+                        "props": {
+                            "cols": 12,
+                        },
+                        "content": [
+                            {
+                                "component": "VSelect",
+                                "props": {
+                                    "model": "p115_storage",
+                                    "label": "115存储类型",
+                                    "items": [
+                                        {
+                                            "title": "自动探测（推荐）",
+                                            "value": "auto",
+                                        },
+                                        {
+                                            "title": "115网盘（宿主存储）",
+                                            "value": "u115",
+                                        },
+                                        {
+                                            "title": "115网盘Plus（插件存储）",
+                                            "value": "115网盘Plus",
+                                        },
+                                    ],
+                                    "hint": "自动探测会依次尝试宿主 115网盘与 115网盘Plus 插件存储",
+                                },
+                            }
+                        ],
+                    }
                 ],
             },
             {
@@ -1594,6 +1636,41 @@ class SaMediaSyncDel(_PluginBase):
         # 保存历史
         self.save_data("history", history)
 
+    def __p115_storage_candidates(self) -> List[str]:
+        """
+        返回 115 存储类型的探测顺序
+
+        :return: 去重后的存储类型列表，首选为配置值，auto 时从宿主存储与插件存储依次尝试
+        """
+        configured = (self._p115_storage or "auto").strip()
+        candidates = [] if configured in ("", "auto") else [configured]
+        for storage_type in DEFAULT_P115_STORAGE_TYPES:
+            if storage_type not in candidates:
+                candidates.append(storage_type)
+        return candidates
+
+    def __find_p115_fileitem(self, path: Path):
+        """
+        在候选存储中定位 115 文件项
+
+        :param path: 115 网盘路径
+        :return: (存储类型, 文件项)，全部失败时返回 (None, None)
+        """
+        last_error = None
+        for storage_type in self.__p115_storage_candidates():
+            try:
+                fileitem = self._storagechain.get_file_item(
+                    storage=storage_type, path=path
+                )
+                if fileitem:
+                    return storage_type, fileitem
+            except Exception as err:
+                last_error = err
+                logger.debug(f"存储 {storage_type} 定位 {path} 未成功：{err}")
+        if last_error:
+            logger.debug(f"{path} 未能在任何候选 115 存储中定位：{last_error}")
+        return None, None
+
     def __delete_p115_files(
         self,
         file_path: str,
@@ -1601,20 +1678,30 @@ class SaMediaSyncDel(_PluginBase):
     ):
         """
         删除115网盘文件
+
+        :param file_path: 115 网盘路径
+        :param media_name: 媒体名称
         """
         try:
-            # 获取文件(夹)详细信息
-            fileitem = self._storagechain.get_file_item(
-                storage="u115", path=Path(file_path)
-            )
+            # 在候选 115 存储中定位文件(夹)，兼容宿主 u115 与 115网盘Plus 插件存储
+            storage_type, fileitem = self.__find_p115_fileitem(Path(file_path))
+            if not fileitem:
+                logger.error(
+                    f"{media_name} 删除网盘媒体 {file_path} 失败: 未在任何 115 存储中定位到该文件，请检查 115 存储是否已登录"
+                )
+                return
             if fileitem.type == "dir":
                 # 删除整个文件夹
                 self._storagechain.delete_file(fileitem)
-                logger.info(f"{media_name} 删除网盘文件夹：{file_path}")
+                logger.info(
+                    f"{media_name} 删除网盘文件夹：{file_path}（存储：{storage_type}）"
+                )
             else:
                 # 调用 MP 模块删除媒体文件和空媒体目录
                 self._storagechain.delete_media_file(fileitem=fileitem)
-                logger.info(f"{media_name} 删除网盘媒体文件：{file_path}")
+                logger.info(
+                    f"{media_name} 删除网盘媒体文件：{file_path}（存储：{storage_type}）"
+                )
         except Exception as e:
             logger.error(f"{media_name} 删除网盘媒体 {file_path} 失败: {e}")
 
@@ -1645,6 +1732,9 @@ class SaMediaSyncDel(_PluginBase):
     def __get_p115_media_suffix(self, file_path: str):
         """
         115网盘 遍历文件夹获取媒体文件后缀
+
+        :param file_path: 媒体服务器路径
+        :return: 媒体文件后缀
         """
         _, sub_paths = self.__get_p115_media_path(file_path)
         file_path = self.__normalize_path(file_path).replace(
@@ -1652,10 +1742,10 @@ class SaMediaSyncDel(_PluginBase):
         )
         file_dir = Path(file_path).parent
         file_basename = Path(file_path).stem
-        file_dir_fileitem = self._storagechain.get_file_item(
-            storage="u115", path=Path(file_dir)
-        )
-        for item in self._storagechain.list_files(file_dir_fileitem):
+        _, dir_item = self.__find_p115_fileitem(Path(file_dir))
+        if not dir_item:
+            return None
+        for item in self._storagechain.list_files(dir_item):
             if item.basename == file_basename:
                 return item.extension
         return None
