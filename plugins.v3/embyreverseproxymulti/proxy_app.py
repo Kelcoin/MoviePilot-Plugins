@@ -43,6 +43,11 @@ PLAYBACK_URL_CACHE_MAX_SIZE = 500
 PLAYBACK_STRM_CACHE_TTL_SECONDS = 300
 REDIRECT_RESOLVE_TIMEOUTS = ((3.0, 10.0), (3.0, 15.0), (5.0, 20.0))
 
+# 上游（Emby）请求超时。httpx 默认 5.0s：Emby 侧删除钩子阻塞 5s 以上时会被我们
+# 判成"网关故障"并回 502，而实际删除已经生效。读超时按"每次收到数据"计，
+# 流式反代播放长视频时不会因此被掐断；连接超时单独收紧到 10s。
+UPSTREAM_TIMEOUT = Timeout(connect=10.0, read=30.0, write=30.0, pool=10.0)
+
 CACHE_KEY_HEADERS = (
     "authorization",
     "cookie",
@@ -483,9 +488,11 @@ def create_app(
         FastAPI 生命周期管理器：创建共享 httpx 客户端及缓存，关闭时清理资源
         """
         limits = Limits(max_keepalive_connections=20, keepalive_expiry=30.0)
-        app.state.http_client_follow = AsyncClient(follow_redirects=True, limits=limits)
+        app.state.http_client_follow = AsyncClient(
+            follow_redirects=True, limits=limits, timeout=UPSTREAM_TIMEOUT
+        )
         app.state.http_client_no_follow = AsyncClient(
-            follow_redirects=False, limits=limits
+            follow_redirects=False, limits=limits, timeout=UPSTREAM_TIMEOUT
         )
         app.state.playback_url_cache = {}
         app.state.playback_cache_order = []

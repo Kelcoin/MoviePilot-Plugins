@@ -118,7 +118,7 @@ class EmbyReverseProxyMulti(_PluginBase):
         "Emby 302 多服务器反向代理，自动代理 HTTP 链接，跳转最终地址，支持外部播放器调用。"
     )
     plugin_icon = "https://raw.githubusercontent.com/jxxghp/MoviePilot-Plugins/refs/heads/main/icons/Emby_A.png"
-    plugin_version = "3.0.1"
+    plugin_version = "3.0.2"
     plugin_author = "Kelcoin"
     author_url = "https://github.com/Kelcoin"
     plugin_config_prefix = "embyreverseproxymulti_"
