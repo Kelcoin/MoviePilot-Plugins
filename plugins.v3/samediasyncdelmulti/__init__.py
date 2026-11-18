@@ -34,25 +34,25 @@ from app.schemas.types import (
 DEFAULT_P115_STORAGE_TYPES = ("u115", "115网盘Plus")
 
 
-class SaMediaSyncDel(_PluginBase):
+class SaMediaSyncDelMulti(_PluginBase):
     """
     神医媒体文件同步删除插件：监听 Emby 删除事件，同步删除转移记录、源文件、下载任务
     """
 
     # 插件名称
-    plugin_name = "神医媒体文件同步删除"
+    plugin_name = "神医媒体文件同步删除（多服务器）"
     # 插件描述
     plugin_desc = "通过神医插件通知同步删除历史记录、源文件和下载任务。"
     # 插件图标
     plugin_icon = "mediasyncdel.png"
     # 插件版本
-    plugin_version = "3.0.2"
+    plugin_version = "3.1.0"
     # 插件作者
     plugin_author = "DDSRem,thsrite"
     # 作者主页
     author_url = "https://github.com/DDSRem"
     # 插件配置项ID前缀
-    plugin_config_prefix = "samediasyncdel_"
+    plugin_config_prefix = "samediasyncdelmulti_"
     # 加载顺序
     plugin_order = 9
     # 可使用的用户级别
@@ -77,11 +77,7 @@ class SaMediaSyncDel(_PluginBase):
     _storagechain = None
     _mediaserver_helper = None
     _default_downloader = None
-    _mediaserver = None
-    _mediaservers = None
-    _emby_host = None
-    _emby_apikey = None
-    _emby_user = None
+    _mediaservers: List[str]
     # 直投报文的格式统计，用于标识本次报文形式
     _dsh_direct_route = 0
 
@@ -97,7 +93,10 @@ class SaMediaSyncDel(_PluginBase):
         self._downloadhis = DownloadHistoryOper()
         self._storagechain = StorageChain()
         self._mediaserver_helper = MediaServerHelper()
-        self._mediaserver = None
+        server_names = (config or {}).get("mediaservers") or []
+        if isinstance(server_names, str):
+            server_names = [server_names]
+        self._mediaservers = list(dict.fromkeys(server_names))
 
         # 读取配置
         if config:
@@ -111,11 +110,6 @@ class SaMediaSyncDel(_PluginBase):
             self._p115_storage = config.get("p115_storage") or "auto"
             self._p123_library_path = config.get("p123_library_path")
             self._p123_force_delete_files = config.get("p123_force_delete_files")
-            self._mediaservers = config.get("mediaservers") or []
-
-            # 获取媒体服务器
-            if self._mediaservers:
-                self._mediaserver = [self._mediaservers[0]]
 
             # 获取默认下载器
             downloader_services = self._downloader_helper.get_services()
@@ -139,24 +133,14 @@ class SaMediaSyncDel(_PluginBase):
                     "p115_storage": self._p115_storage,
                     "p123_library_path": self._p123_library_path,
                     "p123_force_delete_files": self._p123_force_delete_files,
-                    "mediaservers": self._mediaserver,
+                    "mediaservers": self._mediaservers,
                 }
             )
 
-        # 获取媒体服务信息
-        if self._mediaserver:
-            emby_servers = self._mediaserver_helper.get_services(
-                name_filters=self._mediaserver, type_filter="emby"
-            )
-
-            for _, emby_server in emby_servers.items():
-                self._emby_user = emby_server.instance.get_user()
-                self._emby_apikey = emby_server.config.config.get("apikey")
-                self._emby_host = emby_server.config.config.get("host")
-                if not self._emby_host.endswith("/"):
-                    self._emby_host += "/"
-                if not self._emby_host.startswith("http"):
-                    self._emby_host = "http://" + self._emby_host
+    def _accept_emby_source(self, server_name: Optional[str]) -> bool:
+        if server_name is None:
+            return len(self._mediaservers) <= 1
+        return server_name in self._mediaservers
 
     @staticmethod
     def get_command() -> List[Dict[str, Any]]:
@@ -224,6 +208,17 @@ class SaMediaSyncDel(_PluginBase):
         if not event_type:
             logger.debug(f"Emby通知报文缺少事件名称，已跳过：{dict(message)}")
             return schemas.Response(success=False, message="报文缺少事件名称")
+
+        if "deep.delete" in str(event_type):
+            server_name = req.query_params.get("server")
+            if server_name is not None and token != settings.API_TOKEN:
+                return schemas.Response(success=False, message="API密钥错误")
+            if not self._accept_emby_source(server_name):
+                logger.warning("深度删除通知的 server 参数缺失或未匹配插件所选的 Emby")
+                return schemas.Response(
+                    success=False, message="请通过 server 参数指定插件中选中的 Emby 名称"
+                )
+            message = {**message, "_samediasyncdelmulti_server": server_name}
 
         # 神医助手以 JSON 报文直投时 Event 为消息事件名，媒体信息在 Item 中
         logger.debug(f"收到Emby通知报文：{dict(message)}")
@@ -745,7 +740,10 @@ class SaMediaSyncDel(_PluginBase):
                                                 "props": {
                                                     "type": "info",
                                                     "variant": "tonal",
-                                                    "text": "只能配置一个Emby媒体服务器，配置多个默认查寻第一个媒体服务器信息",
+                                                    "text": (
+                                                        "可多选 Emby。多选时，每台 Emby 的通知 URL 都需追加 "
+                                                        "&server=对应的 MoviePilot 媒体服务器名称"
+                                                    ),
                                                 },
                                             },
                                         ],
@@ -938,7 +936,7 @@ class SaMediaSyncDel(_PluginBase):
                             },
                             "events": {
                                 "click": {
-                                    "api": "plugin/SaMediaSyncDel/delete_history",
+                                    "api": "plugin/SaMediaSyncDelMulti/delete_history",
                                     "method": "get",
                                     "params": {
                                         "key": unique,
@@ -1068,6 +1066,13 @@ class SaMediaSyncDel(_PluginBase):
         if not event_type or "deep.delete" not in str(event_type):
             return
 
+        payload = event_data.json_object or {}
+        server_name = payload.get("_samediasyncdelmulti_server")
+        if not self._accept_emby_source(server_name):
+            logger.warning("无法确定深度删除通知的来源 Emby，已跳过同步删除")
+            return
+
+        item = payload.get("Item") or {}
         logger.debug(event.event_data)
 
         # 媒体类型
@@ -1090,7 +1095,7 @@ class SaMediaSyncDel(_PluginBase):
             return
 
         # 对于 Emby 新版本 API 单独处理，兼容季删除
-        if event_data.json_object.get("Item", {}).get("Type", None) == "Season":
+        if item.get("Type") == "Season":
             if not season_num and episode_num:
                 season_num = episode_num
                 episode_num = None
@@ -1125,9 +1130,7 @@ class SaMediaSyncDel(_PluginBase):
         # 对于网盘文件需要获取媒体后缀名
         if media_storage == "p115" or media_storage == "p123":
             if Path(media_path).suffix:
-                media_suffix = event_data.json_object.get("Item", {}).get(
-                    "Container", None
-                )
+                media_suffix = item.get("Container")
                 if not media_suffix:
                     if media_storage == "p115":
                         media_suffix = self.__get_p115_media_suffix(media_path)
@@ -1141,7 +1144,7 @@ class SaMediaSyncDel(_PluginBase):
 
         if (episode_num or season_num) and not media_id:
             media_id = self.__get_series_media_id(
-                event_data.json_object["Item"]["SeriesId"]
+                server_name, item.get("SeriesId")
             )
             if media_id:
                 media_source = MediaSource.TMDB
@@ -1879,23 +1882,49 @@ class SaMediaSyncDel(_PluginBase):
             return "", []
         return msg, transfer_history
 
-    def __get_series_media_id(self, series_id):
+    def __get_series_media_id(
+        self, server_name: Optional[str], series_id: Optional[str]
+    ) -> Optional[str]:
         """
-        获取剧集 TMDB ID
+        向通知对应的 Emby 查询剧集 TMDB ID
+
+        :param server_name (str): MoviePilot 媒体服务器名称，单服务器可省略
+        :param series_id (str): Emby 剧集条目 ID
+
+        :return str: 剧集 TMDB ID，查询失败时返回 None
         """
-        if not self._emby_host or not self._emby_apikey or not self._emby_user:
+        if not series_id or not self._accept_emby_source(server_name):
             return None
-        req_url = f"{self._emby_host}emby/Users/{self._emby_user}/Items/{series_id}?api_key={self._emby_apikey}"
+        if server_name is None:
+            server_name = next(iter(self._mediaservers), None)
+        if not server_name:
+            return None
+
         try:
-            with RequestUtils().get_res(req_url) as res:
-                if res:
-                    return res.json().get("ProviderIds", {}).get("Tmdb")
-                else:
-                    logger.info("获取剧集 TMDB ID 失败，无法连接Emby！")
-                    return None
-        except Exception as e:
-            logger.error("连接Items出错：" + str(e))
-            return None
+            server = self._mediaserver_helper.get_service(name=server_name, type_filter="emby")
+            if not server:
+                logger.warning(f"找不到已启用的 Emby 媒体服务器：{server_name}")
+                return None
+            host = server.config.config.get("host")
+            apikey = server.config.config.get("apikey")
+            if not host or not apikey:
+                logger.warning(f"Emby 媒体服务器 {server_name} 缺少地址或 API 密钥")
+                return None
+            user = server.instance.get_user()
+            if not user:
+                logger.warning(f"未获取到 Emby 媒体服务器 {server_name} 的用户 ID")
+                return None
+            if not host.startswith(("http://", "https://")):
+                host = f"http://{host}"
+            req_url = f"{host.rstrip('/')}/emby/Users/{user}/Items/{series_id}?api_key={apikey}"
+            with RequestUtils().get_res(req_url) as response:
+                if response:
+                    tmdb_id = (response.json().get("ProviderIds") or {}).get("Tmdb")
+                    return str(tmdb_id) if tmdb_id else None
+            logger.warning(f"未能从 Emby 媒体服务器 {server_name} 查询剧集 TMDB ID")
+        except Exception as error:
+            logger.error(f"从 Emby 媒体服务器 {server_name} 查询剧集 TMDB ID 失败：{type(error).__name__}")
+        return None
 
     def handle_torrent(
         self, type: str, src: str, torrent_hash: str
