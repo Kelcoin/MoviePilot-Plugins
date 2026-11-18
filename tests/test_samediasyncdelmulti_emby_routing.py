@@ -2,7 +2,7 @@ import ast
 import asyncio
 import json
 import unittest
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from types import SimpleNamespace
 from typing import Any, Dict, Optional, Tuple
 from unittest.mock import MagicMock, Mock
@@ -24,7 +24,7 @@ class EmbyRoutingTest(unittest.TestCase):
         request_utils = Mock()
         request_utils.return_value.get_res.return_value = response
         namespace = dict(
-            _PluginBase=object, asyncio=asyncio, json=json, Path=Path, logger=Mock(),
+            _PluginBase=object, asyncio=asyncio, json=json, Path=Path, PurePosixPath=PurePosixPath, logger=Mock(),
             eventmanager=Mock(register=lambda *_: lambda fn: fn),
             EventType=SimpleNamespace(WebhookMessage="webhook", DownloadFileDeleted="download"),
             schemas=SimpleNamespace(
@@ -33,7 +33,7 @@ class EmbyRoutingTest(unittest.TestCase):
                     "item_name": None, "item_id": None, "media_id": None, "media_source": None, **fields
                 }),
             ),
-            MediaSource=SimpleNamespace(TMDB="tmdb"), settings=SimpleNamespace(API_TOKEN="token"),
+            MediaSource=Mock(return_value="tmdb", TMDB="tmdb"), settings=SimpleNamespace(API_TOKEN="token"),
             MediaServerHelper=lambda: helper, DownloaderHelper=lambda: SimpleNamespace(get_services=lambda: {}),
             StorageChain=Mock(), TransferChain=Mock(), TransferHistoryOper=Mock(), DownloadHistoryOper=Mock(),
             RequestUtils=request_utils,
@@ -119,6 +119,72 @@ class EmbyRoutingTest(unittest.TestCase):
                 self.assertTrue(send().success)
                 helper.get_service.assert_called_with(name="beta", type_filter="emby")
                 self.assertEqual(plugin._SaMediaSyncDelMulti__sync_del.call_count, 3)
+
+
+    def test_matches_library_paths_for_the_webhook_server(self) -> None:
+        """
+        验证专用规则优先、通用规则兼容和网盘查询目标一致
+        """
+        config = {
+            "enabled": True,
+            "mediaservers": ["alpha", "beta", "gamma"],
+            "local_library_path": (
+                "/library#/shared\n"
+                "alpha | /library#/alpha/movies\n"
+                "alpha | /shows#/alpha/shows\n"
+                "beta | /shows#/beta/shows\n"
+                "beta | /private#/beta/private\n"
+                "/unmapped# \n"
+            ),
+            "p115_library_path": "beta | /library#/strm/beta#/cloud115/beta",
+            "p123_library_path": "beta | D:\\Series#/strm/series#/cloud123/series",
+        }
+        cases = [
+            ("alpha", "/library/Title/Title.mkv", "local", "/alpha/movies/Title/Title.mkv", None),
+            ("alpha", "/shows/Title/Title.mkv", "local", "/alpha/shows/Title/Title.mkv", None),
+            ("beta", "/shows/Title/Title.mkv", "local", "/beta/shows/Title/Title.mkv", None),
+            ("gamma", "/library/Title/Title.mkv", "local", "/shared/Title/Title.mkv", None),
+            ("beta", "/library/Title/Title.strm", "p115", "/strm/beta/Title/Title.strm",
+             "/cloud115/beta/Title/Title.strm"),
+            ("beta", r"D:\Series\Title\Title.strm", "p123", "/strm/series/Title/Title.strm",
+             "/cloud123/series/Title/Title.strm"),
+            ("gamma", "/private/Title/Title.mkv", None, None, None),
+            ("alpha", "/library-other/Title.mkv", None, None, None),
+            ("alpha", "/unmapped/Title.mkv", None, None, None),
+            ("alpha", "/library/../outside.mkv", None, None, None),
+            (None, "/library/Title/Title.mkv", "local", "/alpha/movies/Title/Title.mkv", None),
+        ]
+        for version in (2, 3):
+            plugin, _, _ = self._load_plugin(version)
+            build_event = plugin._SaMediaSyncDelMulti__build_webhook_event
+            sync_del = plugin._SaMediaSyncDelMulti__sync_del
+            suffix115 = plugin._SaMediaSyncDelMulti__get_p115_media_suffix = Mock(return_value="mkv")
+            suffix123 = plugin._SaMediaSyncDelMulti__get_p123_media_suffix = Mock(return_value="mkv")
+            for source, path, storage, mp_path, cloud_path in cases:
+                with self.subTest(version=version, source=source, path=path):
+                    plugin.init_plugin(config if source else {**config, "mediaservers": ["alpha"]})
+                    sync_del.reset_mock()
+                    suffix115.reset_mock()
+                    suffix123.reset_mock()
+                    payload = {
+                        "Event": "strmassistant.deep.delete",
+                        "_samediasyncdelmulti_server": source,
+                        "Item": {"Type": "Episode", "Path": path, "ProviderIds": {"Tmdb": "42"},
+                                 "IndexNumber": 1, "ParentIndexNumber": 1},
+                    }
+                    plugin.sync_del_by_plugin(SimpleNamespace(event_data=build_event(payload)))
+                    if storage is None:
+                        sync_del.assert_not_called()
+                        continue
+                    sync_del.assert_called_once()
+                    args = sync_del.call_args.kwargs
+                    self.assertEqual(args["media_storage"], storage)
+                    self.assertEqual(args["mp_media_path"], mp_path)
+                    self.assertEqual(args["media_path"], cloud_path or mp_path)
+                    if storage == "p115":
+                        suffix115.assert_called_once_with(cloud_path)
+                    if storage == "p123":
+                        suffix123.assert_called_once_with(cloud_path)
 
 
 if __name__ == "__main__":

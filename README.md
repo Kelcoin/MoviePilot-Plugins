@@ -23,7 +23,7 @@ http://emby-b:8096 => 0.0.0.0:8100
 
 通过神医助手（StrmAssistant）的媒体深度删除通知，同步删除 MoviePilot 转移记录中记录的源文件与下载任务，支持 115 网盘、123 网盘与本地文件。
 
-本仓库版本同步自 [DDSRem-Dev/MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)，V2 版本为 1.1.0、V3 版本为 3.1.0，包含以下改进：
+本仓库版本同步自 [DDSRem-Dev/MoviePilot-Plugins](https://github.com/DDSRem-Dev/MoviePilot-Plugins)，V2 版本为 1.2.0、V3 版本为 3.2.0，包含以下改进：
 
 - 支持多选 Emby 媒体服务器，缺少剧集 TMDB ID 时只向发出通知的服务器查询。
 - Emby 通知目标以 JSON 报文直接投递时无法解析，事件到不了插件；
@@ -50,7 +50,20 @@ http://<MoviePilot 地址>:3001/api/v1/plugin/SaMediaSyncDelMulti/emby_webhook?a
 ```
 
 只选一台时，原有 URL 可继续使用。多选后，缺少 `server` 或名称不在插件所选列表里的深度删除通知会被拒绝。
-所有服务器共用插件的路径映射。如果各台 Emby 使用不同的目录，请配置相应的路径前缀；同一个前缀只能对应一个删除目标。
+### 按媒体库配置路径映射
+
+在对应的「本地」「115 网盘」或「123 网盘」路径映射栏中，每行填写一条规则。可以在行首加 `服务器名 | `，把规则绑定到指定的 Emby。服务器名填写 MoviePilot 中的原始名称，与 Webhook 的 `server` 参数对应。
+两台 Emby 都上报 `/media/movies` 时，可以分别配置本地目标目录。
+
+```text
+Emby-A | /media/movies#/mnt/a/movies
+Emby-B | /media/movies#/mnt/b/movies
+Emby-A | /media/tv#/mnt/a/tv
+```
+
+网盘栏每行填写 `服务器名 | Emby STRM 路径#MoviePilot 路径#网盘路径`。例如 `Emby-A | /media/strm#/mnt/a/strm#/影视/A`。
+
+插件先匹配来源服务器的专用规则，再匹配原有的不带服务器名的通用规则。同一优先级依次检查本地、115、123，在每个栏中取第一条匹配规则。若同一栏内的目录前缀重叠，把更具体的路径放在前面。
 
 ## 许可证
 

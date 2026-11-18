@@ -2,7 +2,7 @@ import json
 import shutil
 import sys
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional, Tuple
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -46,7 +46,7 @@ class SaMediaSyncDelMulti(_PluginBase):
     # 插件图标
     plugin_icon = "mediasyncdel.png"
     # 插件版本
-    plugin_version = "3.1.0"
+    plugin_version = "3.2.0"
     # 插件作者
     plugin_author = "DDSRem,thsrite"
     # 作者主页
@@ -337,7 +337,7 @@ class SaMediaSyncDelMulti(_PluginBase):
                                     "model": "local_library_path",
                                     "rows": "2",
                                     "label": "本地媒体库路径映射",
-                                    "placeholder": "媒体服务器路径#MoviePilot路径（一行一个）",
+                                    "placeholder": "媒体服务器路径#MoviePilot路径，可在行首添加「服务器名 | 」",
                                 },
                             }
                         ],
@@ -355,7 +355,7 @@ class SaMediaSyncDelMulti(_PluginBase):
                 "content": [
                     {
                         "component": "div",
-                        "text": "关于路径映射（转移后文件路径）：",
+                        "text": "每行一条路径映射，专用规则可写为「服务器名 | 路径映射」，其余规则通用",
                     },
                     {
                         "component": "div",
@@ -467,7 +467,7 @@ class SaMediaSyncDelMulti(_PluginBase):
                                     "model": "p115_library_path",
                                     "rows": "2",
                                     "label": "115网盘媒体库路径映射",
-                                    "placeholder": "媒体服务器STRM路径#MoviePilot路径#115网盘路径（一行一个）",
+                                    "placeholder": "媒体服务器STRM路径#MoviePilot路径#网盘路径，可在行首添加「服务器名 | 」",
                                 },
                             }
                         ],
@@ -485,7 +485,7 @@ class SaMediaSyncDelMulti(_PluginBase):
                 "content": [
                     {
                         "component": "div",
-                        "text": "关于路径映射（转移后文件路径）：",
+                        "text": "每行一条路径映射，专用规则可写为「服务器名 | 路径映射」，其余规则通用",
                     },
                     {
                         "component": "div",
@@ -556,7 +556,7 @@ class SaMediaSyncDelMulti(_PluginBase):
                                     "model": "p123_library_path",
                                     "rows": "2",
                                     "label": "123云盘媒体库路径映射",
-                                    "placeholder": "媒体服务器STRM路径#MoviePilot路径#115网盘路径（一行一个）",
+                                    "placeholder": "媒体服务器STRM路径#MoviePilot路径#网盘路径，可在行首添加「服务器名 | 」",
                                 },
                             }
                         ],
@@ -574,7 +574,7 @@ class SaMediaSyncDelMulti(_PluginBase):
                 "content": [
                     {
                         "component": "div",
-                        "text": "关于路径映射（转移后文件路径）：",
+                        "text": "每行一条路径映射，专用规则可写为「服务器名 | 路径映射」，其余规则通用",
                     },
                     {
                         "component": "div",
@@ -994,59 +994,59 @@ class SaMediaSyncDelMulti(_PluginBase):
         """
         return str(path or "").replace("\\", "/").strip()
 
-    def has_prefix(self, full_path: str, prefix_path: str) -> bool:
+    def __resolve_media_paths(
+        self, media_path: str, server_name: Optional[str]
+    ) -> Optional[Tuple[str, str, str]]:
         """
-        判断路径是否包含
-        """
-        full = Path(self.__normalize_path(full_path)).parts
-        prefix = Path(self.__normalize_path(prefix_path)).parts
+        匹配媒体库规则并返回存储类型、MoviePilot 路径和删除目标路径
 
-        if len(prefix) > len(full):
-            return False
+        专用规则优先于通用规则，同一优先级按存储和配置顺序匹配
 
-        return full[: len(prefix)] == prefix
+        :param media_path (str): Emby 上报的媒体路径
+        :param server_name (str): MoviePilot 中的来源服务器名称
 
-    def __get_local_media_path(self, media_path):
+        :return Tuple: 存储类型、MoviePilot 路径和删除目标路径，未匹配时返回 None
         """
-        获取本地媒体目录路径
-        """
-        media_paths = self._local_library_path.split("\n")
-        for path in media_paths:
-            if not path:
-                continue
-            parts = path.split("#", 1)
-            parts[0] = self.__normalize_path(parts[0])
-            if self.has_prefix(media_path, parts[0]):
-                return True, parts
-        return False, None
+        item_path = PurePosixPath(self.__normalize_path(media_path))
+        if ".." in item_path.parts:
+            return None
+        if server_name is None and len(self._mediaservers) == 1:
+            server_name = self._mediaservers[0]
 
-    def __get_p115_media_path(self, media_path):
-        """
-        获取115网盘媒体目录路径
-        """
-        media_paths = self._p115_library_path.split("\n")
-        for path in media_paths:
-            if not path:
-                continue
-            parts = path.split("#", 2)
-            parts[0] = self.__normalize_path(parts[0])
-            if self.has_prefix(media_path, parts[0]):
-                return True, parts
-        return False, None
+        shared_match = None
+        for storage, rules, field_count in (
+            ("local", self._local_library_path, 2),
+            ("p115", self._p115_library_path, 3),
+            ("p123", self._p123_library_path, 3),
+        ):
+            for line in (rules or "").splitlines():
+                parts = line.split("#", field_count - 1)
+                if len(parts) != field_count:
+                    continue
+                scope, separator, source = parts[0].partition(" | ")
+                if separator:
+                    if not scope.strip() or scope.strip() != server_name:
+                        continue
+                else:
+                    source = scope
+                    if shared_match is not None:
+                        continue
+                source = self.__normalize_path(source.strip())
+                destinations = [self.__normalize_path(part.strip()) for part in parts[1:]]
+                if not source or not all(destinations):
+                    continue
+                prefix = PurePosixPath(source)
+                if not item_path.is_relative_to(prefix):
+                    continue
 
-    def __get_p123_media_path(self, media_path):
-        """
-        获取123云盘媒体目录路径
-        """
-        media_paths = self._p123_library_path.split("\n")
-        for path in media_paths:
-            if not path:
-                continue
-            parts = path.split("#", 2)
-            parts[0] = self.__normalize_path(parts[0])
-            if self.has_prefix(media_path, parts[0]):
-                return True, parts
-        return False, None
+                relative_path = item_path.relative_to(prefix)
+                mp_path = str(PurePosixPath(destinations[0]) / relative_path)
+                target_path = str(PurePosixPath(destinations[-1]) / relative_path)
+                match = (storage, mp_path, target_path)
+                if separator:
+                    return match
+                shared_match = match
+        return shared_match
 
     @eventmanager.register(EventType.WebhookMessage)
     def sync_del_by_plugin(self, event: Event) -> None:
@@ -1057,7 +1057,6 @@ class SaMediaSyncDelMulti(_PluginBase):
             return
 
         media_suffix = None
-        media_storage = None
 
         event_data = event.event_data
         event_type = event_data.event
@@ -1100,32 +1099,11 @@ class SaMediaSyncDelMulti(_PluginBase):
                 season_num = episode_num
                 episode_num = None
 
-        # 匹配媒体存储模块
-        if (
-            self._local_library_path
-            or self._p115_library_path
-            or self._p123_library_path
-        ):
-            if self._local_library_path:
-                status, _ = self.__get_local_media_path(media_path)
-                if status:
-                    media_storage = "local"
-
-            if not media_storage and self._p115_library_path:
-                status, _ = self.__get_p115_media_path(media_path)
-                if status:
-                    media_storage = "p115"
-
-            if not media_storage and self._p123_library_path:
-                status, _ = self.__get_p123_media_path(media_path)
-                if status:
-                    media_storage = "p123"
-
-            if not media_storage:
-                logger.error(f"{media_name} 同步删除失败，未识别到储存类型")
-                return
-        else:
+        mapping = self.__resolve_media_paths(media_path, server_name)
+        if mapping is None:
+            logger.warning(f"{media_name} 同步删除失败，未匹配到媒体库路径映射：{media_path}")
             return
+        media_storage, mp_media_path, media_path = mapping
 
         # 对于网盘文件需要获取媒体后缀名
         if media_storage == "p115" or media_storage == "p123":
@@ -1161,6 +1139,7 @@ class SaMediaSyncDelMulti(_PluginBase):
             media_type=media_type,
             media_name=media_name,
             media_path=media_path,
+            mp_media_path=mp_media_path,
             media_source=media_source,
             media_id=media_id,
             season_num=season_num,
@@ -1174,6 +1153,7 @@ class SaMediaSyncDelMulti(_PluginBase):
         media_type: str,
         media_name: str,
         media_path: str,
+        mp_media_path: str,
         media_source: Optional[MediaSource],
         media_id: Optional[str],
         season_num: str,
@@ -1188,13 +1168,6 @@ class SaMediaSyncDelMulti(_PluginBase):
             return
 
         if media_storage == "local":
-            # 处理路径映射
-            if self._local_library_path:
-                _, sub_paths = self.__get_local_media_path(media_path)
-                media_path = self.__normalize_path(media_path).replace(
-                    sub_paths[0], sub_paths[1]
-                )
-
             # 兼容重新整理的场景
             if Path(media_path).exists():
                 logger.warn(f"转移路径 {media_path} 未被删除或重新生成，跳过处理")
@@ -1280,13 +1253,6 @@ class SaMediaSyncDelMulti(_PluginBase):
                                 logger.error("删除种子失败：%s" % str(e))
 
         elif media_storage == "p115":
-            mp_media_path: Path
-            if self._p115_library_path:
-                _, sub_paths = self.__get_p115_media_path(media_path)
-                media_path = self.__normalize_path(media_path)
-                mp_media_path = media_path.replace(sub_paths[0], sub_paths[1])
-                media_path = media_path.replace(sub_paths[0], sub_paths[2])
-
             if Path(media_path).suffix:
                 # 自动替换媒体文件后缀名称为真实名称
                 media_path = str(
@@ -1420,13 +1386,6 @@ class SaMediaSyncDelMulti(_PluginBase):
                                     logger.error("删除种子失败：%s" % str(e))
 
         else:
-            mp_media_path: Path
-            if self._p123_library_path:
-                _, sub_paths = self.__get_p123_media_path(media_path)
-                media_path = self.__normalize_path(media_path)
-                mp_media_path = media_path.replace(sub_paths[0], sub_paths[1])
-                media_path = media_path.replace(sub_paths[0], sub_paths[2])
-
             if Path(media_path).suffix:
                 # 自动替换媒体文件后缀名称为真实名称
                 media_path = str(
@@ -1732,17 +1691,14 @@ class SaMediaSyncDelMulti(_PluginBase):
         except Exception as e:
             logger.error(f"{media_name} 删除网盘媒体 {file_path} 失败: {e}")
 
-    def __get_p115_media_suffix(self, file_path: str):
+    def __get_p115_media_suffix(self, file_path: str) -> Optional[str]:
         """
-        115网盘 遍历文件夹获取媒体文件后缀
+        遍历 115网盘文件夹获取媒体文件后缀
 
-        :param file_path: 媒体服务器路径
-        :return: 媒体文件后缀
+        :param file_path (str): 映射后的网盘路径
+
+        :return str: 媒体文件后缀，未找到时返回 None
         """
-        _, sub_paths = self.__get_p115_media_path(file_path)
-        file_path = self.__normalize_path(file_path).replace(
-            sub_paths[0], sub_paths[2]
-        )
         file_dir = Path(file_path).parent
         file_basename = Path(file_path).stem
         _, dir_item = self.__find_p115_fileitem(Path(file_dir))
@@ -1753,14 +1709,14 @@ class SaMediaSyncDelMulti(_PluginBase):
                 return item.extension
         return None
 
-    def __get_p123_media_suffix(self, file_path: str):
+    def __get_p123_media_suffix(self, file_path: str) -> Optional[str]:
         """
-        123云盘 遍历文件夹获取媒体文件后缀
+        遍历 123网盘文件夹获取媒体文件后缀
+
+        :param file_path (str): 映射后的网盘路径
+
+        :return str: 媒体文件后缀，未找到时返回 None
         """
-        _, sub_paths = self.__get_p123_media_path(file_path)
-        file_path = self.__normalize_path(file_path).replace(
-            sub_paths[0], sub_paths[2]
-        )
         file_dir = Path(file_path).parent
         file_basename = Path(file_path).stem
         file_dir_fileitem = self._storagechain.get_file_item(

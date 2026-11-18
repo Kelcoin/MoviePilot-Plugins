@@ -35,11 +35,12 @@
     "name": "神医媒体文件同步删除（多服务器）",
     "description": "通过神医插件通知同步删除历史记录、源文件和下载任务。",
     "labels": "媒体库，文件整理",
-    "version": "1.1.0",
+    "version": "1.2.0",
     "icon": "mediasyncdel.png",
     "author": "DDSRem",
     "level": 1,
     "history": {
+      "v1.2.0": "支持按 Emby 服务器和媒体库前缀配置专用路径映射，兼容通用规则",
       "v1.1.0": "使用独立插件 ID SaMediaSyncDelMulti，支持多台 Emby，按 Webhook 指定的来源服务器查询剧集信息",
       "v1.0.10": "事件名改为包含匹配，兼容带命名空间前缀的深度删除事件",
       "v1.0.9": "修复 Emby 通知 JSON 报文无法解析、深度删除下发媒体目录时无法匹配转移记录与网盘文件",
